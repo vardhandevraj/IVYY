@@ -1,9 +1,12 @@
 import os
 import re
 import io
+import json
 import smtplib
+import ssl
 import secrets
 import threading
+from urllib.request import Request, urlopen
 from datetime import datetime, timedelta
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -257,9 +260,59 @@ def inject_csrf_token():
     return {"csrf_token": generate_csrf_token}
 
 
-# ── Email delivery (SMTP with a development fallback) ───────────────────────
+# ── Email delivery (Brevo API, then SMTP, then console fallback) ───────────
+def parse_from_address(from_address):
+    """Split "IVY <email@example.com>" into (name, email)."""
+    match = re.match(r"^(.*?)\s*<([^>]+)>\s*$", from_address.strip())
+    if match:
+        return match.group(1).strip() or None, match.group(2).strip()
+    return None, from_address.strip()
+
+
 def send_email(to_address, subject, html_body):
-    """Send an HTML email. Without SMTP configured, print it to the console."""
+    """Send an HTML email.
+
+    Prefers the Brevo Transactional Email API (set BREVO_API_KEY to a Brevo
+    API key that starts with xkeysib-). Falls back to SMTP when the API key
+    is absent, and prints the message to the console when no sending
+    credentials are configured.
+    """
+    api_key = os.environ.get("BREVO_API_KEY")
+    if api_key:
+        from_address = os.environ.get("SMTP_FROM", "noreply@campusconnect.local")
+        sender_name, sender_email = parse_from_address(from_address)
+        payload = {
+            "sender": {"name": sender_name or "IVY", "email": sender_email},
+            "to": [{"email": to_address}],
+            "subject": subject,
+            "htmlContent": html_body,
+        }
+        request = Request(
+            "https://api.brevo.com/v3/smtp/email",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"api-key": api_key, "Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            try:
+                import certifi
+                context = ssl.create_default_context(cafile=certifi.where())
+            except (ImportError, AttributeError):
+                context = None
+            opener = urlopen(request, timeout=30, context=context) if context else urlopen(request, timeout=30)
+            with opener as response:
+                print(f"Brevo API send OK ({response.status}): {response.read().decode()[:120]}")
+            return True
+        except Exception as error:
+            print(f"Brevo API send failed: {error}")
+            read_error = getattr(error, "read", None)
+            if callable(read_error):
+                try:
+                    print(f"Brevo API error body: {read_error().decode()[:300]}")
+                except Exception:
+                    pass
+            return False
+
     smtp_host = os.environ.get("SMTP_HOST")
     smtp_port = int(os.environ.get("SMTP_PORT", "587"))
     smtp_user = os.environ.get("SMTP_USER")

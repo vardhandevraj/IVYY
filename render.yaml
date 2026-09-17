@@ -16,6 +16,8 @@ services:
     envVars:
       - key: SECRET_KEY
         sync: false
+      - key: BREVO_API_KEY
+        sync: false
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_KEY
