@@ -24,6 +24,7 @@ from psycopg2 import Error
 from dotenv import load_dotenv
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -39,6 +40,11 @@ app = Flask(__name__)
 # A secret key allows Flask sessions and flash messages to work.
 # In deployment, set SECRET_KEY in the server environment.
 app.secret_key = os.environ.get("SECRET_KEY", "campus-connect-ai-beginner-secret")
+
+# Trust Render's proxy so X-Forwarded-Proto/Host are used, which keeps
+# url_for(_external=True) building https:// URLs (needed for Google OAuth's
+# redirect_uri to match the registered https URL).
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
 # SocketIO adds real-time messaging support to the Flask app.
 socketio = SocketIO(app, cors_allowed_origins="*")
