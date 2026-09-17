@@ -509,8 +509,23 @@ def inject_user_flags():
     def flag_is_admin():
         if "is_admin" in session:
             return session["is_admin"]
-        verification_required()
-        return session.get("is_admin", False)
+        try:
+            connection = get_db_connection()
+            cursor = db_cursor(connection, dictionary=True)
+            cursor.execute(
+                "SELECT is_admin FROM users WHERE id = %s",
+                (session.get("user_id"),),
+            )
+            row = cursor.fetchone()
+            session["is_admin"] = bool(row["is_admin"]) if row else False
+            return session["is_admin"]
+        except Error:
+            return False
+        finally:
+            if "connection" in locals() and not connection.closed:
+                if "cursor" in locals():
+                    cursor.close()
+                connection.close()
     return {"is_admin_user": flag_is_admin}
 
 
@@ -1156,9 +1171,6 @@ def create_post():
     if not login_required():
         flash("Please login before creating a post.")
         return redirect(url_for("login"))
-    if not verification_required():
-        flash("Please verify your email before creating posts.")
-        return redirect(url_for("feed"))
 
     content = request.form.get("content")
     post_type = request.form.get("post_type")
@@ -1354,9 +1366,6 @@ def add_comment(post_id):
     if not login_required():
         flash("Please login before commenting.")
         return redirect(url_for("login"))
-    if not verification_required():
-        flash("Please verify your email before commenting.")
-        return redirect(url_for("feed"))
 
     comment_text = request.form.get("comment_text")
 
@@ -1740,9 +1749,6 @@ def send_friend_request(receiver_id):
     if not login_required():
         flash("Please login first.")
         return redirect(url_for("login"))
-    if not verification_required():
-        flash("Please verify your email before sending friend requests.")
-        return redirect(url_for("students"))
 
     if receiver_id == session["user_id"]:
         flash("You cannot send a request to yourself.")
@@ -1869,9 +1875,6 @@ def follow(following_id):
     if not login_required():
         flash("Please login first.")
         return redirect(url_for("login"))
-    if not verification_required():
-        flash("Please verify your email before following students.")
-        return redirect(url_for("students"))
 
     if following_id == session["user_id"]:
         flash("You cannot follow yourself.")
@@ -2141,9 +2144,6 @@ def new_conversation():
     if not login_required():
         flash("Please login to send messages.")
         return redirect(url_for("login"))
-    if not verification_required():
-        flash("Please verify your email before starting chats.")
-        return redirect(url_for("messages"))
 
     target_user_id = request.form.get("user_id", type=int)
     if not target_user_id or target_user_id == session["user_id"]:
@@ -2208,9 +2208,6 @@ def create_group_conversation():
     if not login_required():
         flash("Please login to create a group.")
         return redirect(url_for("login"))
-    if not verification_required():
-        flash("Please verify your email before creating groups.")
-        return redirect(url_for("messages"))
 
     title = (request.form.get("title") or "").strip()
     member_ids = {member_id for member_id in request.form.getlist("member_ids", type=int)
@@ -2714,9 +2711,6 @@ def start_call_room(conversation_id):
     if not login_required():
         flash("Please login before starting a call.")
         return redirect(url_for("login"))
-    if not verification_required():
-        flash("Please verify your email before starting a video call.")
-        return redirect(url_for("messages"))
 
     if not user_is_conversation_member(session["user_id"], conversation_id):
         flash("You can only start calls in your own conversations.")
@@ -3343,10 +3337,6 @@ def resources():
     if not login_required():
         flash("Please login to view resources.")
         return redirect(url_for("login"))
-    if request.method == "POST" and not verification_required():
-        flash("Please verify your email before sharing resources.")
-        return redirect(url_for("resources"))
-
     if request.method == "POST":
         title = request.form.get("title")
         description = request.form.get("description")
