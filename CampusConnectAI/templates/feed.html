@@ -78,16 +78,6 @@
                 {% endif %}
             {% endwith %}
 
-            {% if needs_verification() %}
-                <div class="verify-banner">
-                    <span>Verify your email to post, comment, and connect with peers.</span>
-                    <form action="{{ url_for('resend_verification') }}" method="POST">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <button class="small-action-button" type="submit">Resend Email</button>
-                    </form>
-                </div>
-            {% endif %}
-
             <form class="create-post-form" action="{{ url_for('create_post') }}" method="POST" enctype="multipart/form-data">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <div class="form-row">

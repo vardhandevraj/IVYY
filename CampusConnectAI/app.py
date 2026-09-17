@@ -354,19 +354,7 @@ def send_email(to_address, subject, html_body):
         return False
 
 
-def send_verification_email(user_id, email, full_name):
-    """Create a verify-email token and email the link to the student."""
-    token = create_auth_token(user_id, "verify_email")
-    verify_url = url_for("verify_email", token=token, _external=True)
-    html = (
-        f"<h2>Welcome to IVY, {full_name}!</h2>"
-        "<p>Please confirm your email address to unlock posting, commenting, "
-        "friending, and messaging.</p>"
-        f'<p><a href="{verify_url}">Confirm my email</a></p>'
-        f"<p style='color:#64748b'>If the button does not work, paste this link: "
-        f"<br>{verify_url}</p>"
-    )
-    return send_email(email, "IVY — Confirm your email", html)
+# Email verification has been removed – account is usable immediately.
 
 
 def send_password_reset_email(user_id, email):
@@ -511,26 +499,9 @@ def update_last_seen(user_id):
 
 
 def verification_required():
-    """Return True if the logged-in user may create content (email verified)."""
-    if "is_verified" in session and session["is_verified"]:
-        return True
-    try:
-        connection = get_db_connection()
-        cursor = db_cursor(connection, dictionary=True)
-        cursor.execute("SELECT is_verified, is_admin FROM users WHERE id = %s", (session.get("user_id"),))
-        row = cursor.fetchone()
-        if row:
-            session["is_verified"] = row["is_verified"]
-            session["is_admin"] = row["is_admin"]
-            return bool(row["is_verified"])
-        return False
-    except Error:
-        return False
-    finally:
-        if "connection" in locals() and not connection.closed:
-            if "cursor" in locals():
-                cursor.close()
-            connection.close()
+    """Return True if the logged-in user may create content. Always True:
+    email verification is not enforced anymore."""
+    return True
 
 
 @app.context_processor
@@ -541,15 +512,6 @@ def inject_user_flags():
         verification_required()
         return session.get("is_admin", False)
     return {"is_admin_user": flag_is_admin}
-
-
-@app.context_processor
-def inject_verification_state():
-    def user_needs_verification():
-        if "is_verified" in session:
-            return not session["is_verified"]
-        return verification_required() is False
-    return {"needs_verification": user_needs_verification}
 
 
 @app.route("/")
@@ -582,11 +544,11 @@ def register():
                 flash("This email is already registered. Please login instead.")
                 return redirect(url_for("register"))
 
-            # This INSERT query saves the new student account.
+            # This INSERT query saves the new student account (verified by default).
             cursor.execute(
                 """
-                INSERT INTO users (full_name, email, password, department, study_year, bio)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                INSERT INTO users (full_name, email, password, department, study_year, bio, is_verified)
+                VALUES (%s, %s, %s, %s, %s, %s, TRUE)
                 RETURNING id
                 """,
                 (full_name, email, hashed_password, department, year, bio),
@@ -595,8 +557,7 @@ def register():
 
             connection.commit()
 
-            send_verification_email(new_user["id"], email, full_name)
-            flash("Account created successfully. A confirmation email has been sent to verify your account. Please check your inbox.")
+            flash("Account created successfully. You can now sign in.")
             return redirect(url_for("login"))
 
         except Error as error:
@@ -669,51 +630,6 @@ def logout():
     session.clear()
     flash("You have been logged out.")
     return redirect(url_for("login"))
-
-
-# ── Email verification ──────────────────────────────────────────────────────
-@app.route("/verify-email/<token>")
-def verify_email(token):
-    """Confirm a student's email address using a one-time link."""
-    record = consume_auth_token(token, "verify_email")
-    if not record:
-        flash("This verification link is invalid or has expired. Please request a new one after logging in.")
-        return redirect(url_for("login"))
-
-    try:
-        connection = get_db_connection()
-        cursor = connection.cursor()
-        cursor.execute(
-            "UPDATE users SET is_verified = TRUE WHERE id = %s",
-            (record["user_id"],),
-        )
-        connection.commit()
-    except Error as error:
-        flash(f"Database error: {error}")
-        return redirect(url_for("login"))
-    finally:
-        if "connection" in locals() and not connection.closed:
-            if "cursor" in locals():
-                cursor.close()
-            connection.close()
-
-    session["is_verified"] = True
-    flash("Your email has been verified. You can now post, comment, and connect with peers.")
-    return redirect(url_for("feed"))
-
-
-@app.route("/resend-verification", methods=["POST"])
-def resend_verification():
-    """Send a fresh verification link to the logged-in student."""
-    if not login_required():
-        flash("Please login to resend the verification email.")
-        return redirect(url_for("login"))
-
-    email = session.get("email")
-    full_name = session.get("full_name")
-    send_verification_email(session["user_id"], email, full_name)
-    flash("A new verification email has been sent. Check your inbox and spam folder.")
-    return redirect(request.referrer or url_for("feed"))
 
 
 # ── Password reset ──────────────────────────────────────────────────────────
