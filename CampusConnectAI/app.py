@@ -47,7 +47,9 @@ app.secret_key = os.environ.get("SECRET_KEY", "campus-connect-ai-beginner-secret
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
 # SocketIO adds real-time messaging support to the Flask app.
-socketio = SocketIO(app, cors_allowed_origins="*")
+# gevent backend (with gunicorn's gevent worker) so websockets work; unlike
+# eventlet's monkey patching it does not break SSLContext.minimum_version.
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="gevent")
 
 # Google OAuth Sign-In. The client is only registered when the credentials are
 # present in the environment, so the app keeps working without Google set up.
