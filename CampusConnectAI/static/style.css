@@ -282,9 +282,15 @@ body {
     font-size: 15px;
     line-height: 1.6;
     min-height: 100vh;
+    min-height: 100dvh; /* mobile browsers: exclude the address bar */
     overflow-x: hidden;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+}
+
+/* No double-tap zoom delay on taps (additive; desktop unaffected). */
+a, button, summary, input, [role="button"] {
+    touch-action: manipulation;
 }
 
 /* ── Background Subtle Grid Mesh ──────────────────────────────── */
@@ -295,6 +301,7 @@ body::after {
     left: 0;
     width: 100vw;
     height: 100vh;
+    height: 100dvh;
     background-image: 
         linear-gradient(to right, rgba(255, 255, 255, 0.015) 1px, transparent 1px),
         linear-gradient(to bottom, rgba(255, 255, 255, 0.015) 1px, transparent 1px);
@@ -358,6 +365,7 @@ code, pre {
     justify-content: space-between;
     align-items: center;
     padding: 14px 6%;
+    padding-top: calc(14px + env(safe-area-inset-top)); /* iPhones with a notch */
     background: rgba(8, 9, 13, 0.93);
     border-bottom: 1px solid var(--border-subtle);
     z-index: 100;
@@ -868,6 +876,7 @@ code, pre {
     justify-content: center;
     align-items: center;
     min-height: calc(100vh - 72px);
+    min-height: calc(100dvh - 72px);
 }
 
 .auth-panel {
@@ -1471,6 +1480,7 @@ code, pre {
     grid-template-columns: 280px 1fr;
     gap: 24px;
     height: calc(100vh - 140px);
+    height: calc(100dvh - 140px);
 }
 
 .chat-users {
@@ -1886,6 +1896,7 @@ code, pre {
 .messages-workspace {
     width: min(1380px, 92vw);
     height: calc(100vh - 108px);
+    height: calc(100dvh - 108px);
     min-height: 620px;
     margin: 24px auto;
     display: grid;
@@ -2191,7 +2202,7 @@ code, pre {
     .messages-workspace.has-open-conversation .conversation-sidebar { display: none; }
     .messages-workspace:not(.has-open-conversation) .conversation-panel { display: none; }
     .conversation-header { min-height: 68px; padding: 11px 15px; }
-    .mobile-back-button { display: inline-flex; width: 30px; height: 30px; align-items: center; justify-content: center; }
+    .mobile-back-button { display: inline-flex; width: 40px; height: 40px; align-items: center; justify-content: center; }
     .header-avatar { width: 35px; height: 35px; border-radius: 11px; }
     .conversation-title-block h2 { font-size: 14px; }
     .conversation-title-block p { font-size: 10.5px; }
@@ -2199,10 +2210,10 @@ code, pre {
     .message-row { max-width: 90%; }
     .message-row.is-own { max-width: 86%; }
     .message-content { font-size: 13px; }
-    .message-composer { padding: 10px 12px 13px; }
+    .message-composer { padding: 10px 12px calc(13px + env(safe-area-inset-bottom)); }
     .ivy-mention-hint { display: none; }
     .composer-footer { justify-content: flex-end; margin-top: 5px; }
-    .conversation-info-menu summary { width: 30px; height: 30px; }
+    .conversation-info-menu summary { width: 40px; height: 40px; }
     .conversation-popover { right: -4px; width: min(250px, calc(100vw - 28px)); }
     .modal-backdrop { padding: 13px; }
     .conversation-modal { max-height: calc(100dvh - 26px); padding: 24px 20px; border-radius: 17px; }
@@ -2316,6 +2327,7 @@ code, pre {
 /* Touch devices have no hover: keep the per-chat options visible. */
 @media (hover: none) {
     .ai-chat-menu { opacity: 1; }
+    .ai-chat-menu summary { width: 40px; height: 40px; }
 }
 
 /* ── Feature additions: verification, presence, reports, study planner ──── */
