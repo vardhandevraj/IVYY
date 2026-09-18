@@ -166,8 +166,8 @@ def _pooled_connection():
             # A pooled connection may carry an open transaction from its last
             # user (e.g. a read that was never committed). Roll it back so the
             # next request starts clean; idle connections are reused as-is.
-            status = conn.info.transaction_status
-            if status != psycopg2.extensions.TRANSACTION_IDLE:
+            status = conn.get_transaction_status()
+            if status != psycopg2.extensions.TRANSACTION_STATUS_IDLE:
                 conn.reset()
             return _PooledConnection(conn)
         try:
