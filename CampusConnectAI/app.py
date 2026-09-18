@@ -60,11 +60,18 @@ GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
 
 oauth = OAuth(app)
 if GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET:
+    # Google's endpoints are hardcoded instead of fetched via
+    # server_metadata_url (OpenID discovery). Discovery adds a network round
+    # trip on every login and is the usual cause of "maximum recursion depth
+    # exceeded" in authorize_redirect on some runtimes.
     oauth.register(
         name="google",
         client_id=GOOGLE_CLIENT_ID,
         client_secret=GOOGLE_CLIENT_SECRET,
-        server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
+        authorize_url="https://accounts.google.com/o/oauth2/v2/auth",
+        access_token_url="https://oauth2.googleapis.com/token",
+        userinfo_endpoint="https://openidconnect.googleapis.com/v1/userinfo",
+        jwks_uri="https://www.googleapis.com/oauth2/v3/certs",
         client_kwargs={"scope": "openid email profile"},
     )
 
@@ -1065,6 +1072,8 @@ def login_google():
     try:
         return oauth.google.authorize_redirect(redirect_uri)
     except Exception as error:
+        import traceback
+        traceback.print_exc()
         print(f"Google OAuth error: {error}")
         flash(f"Google Sign-In could not be started ({error}). Please try again.")
         return redirect(url_for("login"))
