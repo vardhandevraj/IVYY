@@ -243,7 +243,7 @@ def allowed_image(filename):
     return extension in app.config["IMAGE_EXTENSIONS"]
 
 
-def save_uploaded_file(uploaded_file, file_prefix, bucket_name):
+def save_uploaded_file(uploaded_file, file_prefix, bucket_name, max_dimension=1600):
     """Save an uploaded file and return the path stored in Supabase."""
     if supabase is None:
         return ""
@@ -253,8 +253,8 @@ def save_uploaded_file(uploaded_file, file_prefix, bucket_name):
     is_image = original_name.rsplit(".", 1)[-1] in app.config["IMAGE_EXTENSIONS"] if "." in original_name else False
 
     if is_image:
-        # Compress / downscale images before upload to keep the feed fast.
-        data, content_type = compress_image_bytes(uploaded_file, max_dimension=1600)
+        # Always compress / downscale images before upload to keep pages fast.
+        data, content_type = compress_image_bytes(uploaded_file, max_dimension=max_dimension)
         safe_name = safe_name.rsplit(".", 1)[0] + ".jpg" if safe_name and "." in safe_name else (safe_name or "image.jpg")
     else:
         data = uploaded_file.read()
@@ -514,25 +514,29 @@ def consume_auth_token(token, token_type):
             connection.close()
 
 
-# ── Image compression (downscale before upload) ─────────────────────────────
-def compress_image_bytes(file_storage, max_dimension=1600):
+# ── Image compression (downscale + re-encode before upload) ─────────────────
+def compress_image_bytes(file_storage, max_dimension=1600, quality=80):
     """Downscale and re-encode an uploaded image, returning new bytes + mime."""
     try:
         file_storage.stream.seek(0)
         image = Image.open(file_storage.stream)
         format_name = (image.format or "JPEG").upper()
-        image = image.convert("RGB") if format_name in ("PNG", "JPEG", "JPG", "GIF") else image
-        image = image.convert("RGBA") if image.mode in ("P", "LA") else image
+        if format_name not in ("JPEG", "PNG", "JPG", "GIF"):
+            file_storage.stream.seek(0)
+            return file_storage.read(), (file_storage.mimetype or "application/octet-stream")
+        # Flatten transparency/alpha onto white so every image can become JPEG.
+        if image.mode in ("RGBA", "LA", "P"):
+            rgba = image.convert("RGBA")
+            background = Image.new("RGB", rgba.size, (255, 255, 255))
+            background.paste(rgba, mask=rgba.split()[-1])
+            image = background
+        else:
+            image = image.convert("RGB")
         image.thumbnail((max_dimension, max_dimension), Image.LANCZOS)
         buffer = io.BytesIO()
-        save_format = "PNG" if image.mode == "RGBA" else "JPEG"
-        if save_format == "JPEG":
-            image = image.convert("RGB")
-            image.save(buffer, format="JPEG", quality=82, optimize=True)
-        else:
-            image.save(buffer, format="PNG", optimize=True)
+        image.save(buffer, format="JPEG", quality=quality, optimize=True, progressive=True)
         buffer.seek(0)
-        return buffer.read(), ("image/png" if save_format == "PNG" else "image/jpeg")
+        return buffer.read(), "image/jpeg"
     except Exception:
         file_storage.stream.seek(0)
         return file_storage.read(), (file_storage.mimetype or "application/octet-stream")
@@ -1649,7 +1653,7 @@ def profile():
 
             if profile_picture_file and profile_picture_file.filename:
                 if allowed_image(profile_picture_file.filename):
-                    profile_picture = save_uploaded_file(profile_picture_file, f"user_{session['user_id']}_profile", STORAGE_BUCKETS["profile"])
+                    profile_picture = save_uploaded_file(profile_picture_file, f"user_{session['user_id']}_profile", STORAGE_BUCKETS["profile"], max_dimension=512)
                 else:
                     flash("Profile picture must be PNG, JPG, JPEG, or GIF.")
                     return redirect(url_for("profile"))
@@ -2404,7 +2408,7 @@ def create_group_conversation():
 
         avatar_path = None
         if group_image and group_image.filename:
-            avatar_path = save_uploaded_file(group_image, f"group_{session['user_id']}", STORAGE_BUCKETS["chat"])
+            avatar_path = save_uploaded_file(group_image, f"group_{session['user_id']}", STORAGE_BUCKETS["chat"], max_dimension=512)
 
         cursor.execute(
             "INSERT INTO conversations (title, is_group, created_by, avatar_path) "
