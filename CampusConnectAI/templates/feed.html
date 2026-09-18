@@ -203,9 +203,27 @@
                         </article>
                     {% endfor %}
                 {% else %}
-                    <div class="empty-feed">
-                        <h2>No posts yet</h2>
-                        <p>Be the first to share notes or start a discussion.</p>
+                    {% if not has_prev %}
+                        <div class="empty-feed">
+                            <h2>No posts yet</h2>
+                            <p>Be the first to share notes or start a discussion.</p>
+                        </div>
+                    {% endif %}
+                {% endif %}
+
+                {% if has_next or has_prev %}
+                    <div class="pagination">
+                        {% if has_prev %}
+                            <a href="{{ url_for('feed', page=page - 1) }}" class="small-link-button">&larr; Newer</a>
+                        {% else %}
+                            <span class="small-link-button disabled-link">&larr; Newer</span>
+                        {% endif %}
+                        <span>Page {{ page }}</span>
+                        {% if has_next %}
+                            <a href="{{ url_for('feed', page=page + 1) }}" class="small-link-button">Older &rarr;</a>
+                        {% else %}
+                            <span class="small-link-button disabled-link">Older &rarr;</span>
+                        {% endif %}
                     </div>
                 {% endif %}
             </div>

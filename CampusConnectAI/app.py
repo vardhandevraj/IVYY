@@ -13,6 +13,8 @@ from email.mime.multipart import MIMEMultipart
 
 from groq import Groq
 import psycopg2
+from psycopg2 import Error
+from psycopg2 import pool as pgpool
 from psycopg2.extras import RealDictCursor
 from supabase import create_client, Client
 from PIL import Image
@@ -117,8 +119,63 @@ def socket_conversation_id(data):
 
 
 def get_db_connection():
-    """Create and return a new PostgreSQL database connection."""
-    return psycopg2.connect(SUPABASE_DB_URL)
+    """Return a pooled PostgreSQL connection whose .close() hands it back to
+    the pool instead of dropping it. Reusing warm connections avoids a TLS
+    handshake + auth on every request, which is the main source of latency."""
+    return _pooled_connection()
+
+
+class _PooledConnection:
+    """Thin proxy that returns its underlying connection to the pool on close()."""
+
+    def __init__(self, conn):
+        self._conn = conn
+        self.closed = False
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+    def close(self):
+        if not self.closed:
+            self.closed = True
+            try:
+                _db_pool.putconn(self._conn)
+            except Exception:
+                try:
+                    _db_pool.putconn(self._conn, close=True)
+                except Exception:
+                    pass
+
+
+_db_pool = None
+_DB_POOL_LOCK = threading.Lock()
+
+
+def _pooled_connection():
+    """Check a healthy connection out of the shared pool (created lazily)."""
+    global _db_pool
+    if _db_pool is None:
+        with _DB_POOL_LOCK:
+            if _db_pool is None:
+                _db_pool = pgpool.ThreadedConnectionPool(
+                    minconn=1, maxconn=10, dsn=SUPABASE_DB_URL
+                )
+    for _ in range(3):
+        conn = _db_pool.getconn()
+        if not conn.closed:
+            # A pooled connection may carry an open transaction from its last
+            # user (e.g. a read that was never committed). Roll it back so the
+            # next request starts clean; idle connections are reused as-is.
+            status = conn.info.transaction_status
+            if status != psycopg2.extensions.TRANSACTION_IDLE:
+                conn.reset()
+            return _PooledConnection(conn)
+        try:
+            _db_pool.putconn(conn, close=True)
+        except Exception:
+            pass
+    raise RuntimeError("Could not obtain a database connection from the pool.")
+
 
 def db_cursor(connection, dictionary=False):
     if dictionary:
@@ -1091,14 +1148,21 @@ def feed():
         flash("Please login to view the learning feed.")
         return redirect(url_for("login"))
 
+    # Pagination: only one page of posts (and their comments) is loaded per
+    # request instead of scanning the entire feed on every visit.
+    per_page = 20
+    page = max(request.args.get("page", 1, type=int), 1)
+    offset = (page - 1) * per_page
+
     posts = []
     comments_by_post = {}
+    has_next = False
 
     try:
         connection = get_db_connection()
         cursor = db_cursor(connection, dictionary=True)
 
-        # This SELECT query loads feed posts with counts for likes and comments.
+        # Fetch one extra post to know whether a second page exists.
         cursor.execute(
             """
             SELECT
@@ -1111,42 +1175,70 @@ def feed():
                 posts.created_at,
                 users.full_name,
                 users.department,
-                users.study_year,
-                (SELECT COUNT(*) FROM likes WHERE likes.post_id = posts.id) AS like_count,
-                (SELECT COUNT(*) FROM comments WHERE comments.post_id = posts.id) AS comment_count,
-                (
-                    SELECT COUNT(*)
-                    FROM likes
-                    WHERE likes.post_id = posts.id
-                    AND likes.user_id = %s
-                ) AS liked_by_user
+                users.study_year
             FROM posts
             INNER JOIN users ON posts.user_id = users.id
-            ORDER BY posts.created_at DESC
+            ORDER BY posts.created_at DESC, posts.id DESC
+            LIMIT %s OFFSET %s
             """,
-            (session["user_id"],),
+            (per_page + 1, offset),
         )
-        posts = cursor.fetchall()
+        page_rows = cursor.fetchall()
+        has_next = len(page_rows) > per_page
+        posts = page_rows[:per_page]
 
-        # This SELECT query loads comments with each commenter's name.
-        cursor.execute(
-            """
-            SELECT
-                comments.id,
-                comments.post_id,
-                comments.user_id,
-                comments.comment_text,
-                comments.created_at,
-                users.full_name
-            FROM comments
-            INNER JOIN users ON comments.user_id = users.id
-            ORDER BY comments.created_at ASC
-            """
-        )
-        comments = cursor.fetchall()
+        post_ids = [post["id"] for post in posts]
+        if post_ids:
+            placeholders = ", ".join(["%s"] * len(post_ids))
+            params = tuple(post_ids)
 
-        for comment in comments:
-            comments_by_post.setdefault(comment["post_id"], []).append(comment)
+            # Like and comment totals for every post on this page, grouped once
+            # instead of a correlated COUNT subquery per post.
+            cursor.execute(
+                f"SELECT post_id, COUNT(*) AS like_count FROM likes "
+                f"WHERE post_id IN ({placeholders}) GROUP BY post_id",
+                params,
+            )
+            like_counts = {row["post_id"]: row["like_count"] for row in cursor.fetchall()}
+
+            cursor.execute(
+                f"SELECT post_id, COUNT(*) AS comment_count FROM comments "
+                f"WHERE post_id IN ({placeholders}) GROUP BY post_id",
+                params,
+            )
+            comment_counts = {row["post_id"]: row["comment_count"] for row in cursor.fetchall()}
+
+            # Whether the logged-in student already liked each post.
+            cursor.execute(
+                f"SELECT post_id FROM likes WHERE post_id IN ({placeholders}) AND user_id = %s",
+                tuple(list(post_ids) + [session["user_id"]]),
+            )
+            liked_post_ids = {row["post_id"] for row in cursor.fetchall()}
+
+            for post in posts:
+                post["like_count"] = like_counts.get(post["id"], 0)
+                post["comment_count"] = comment_counts.get(post["id"], 0)
+                post["liked_by_user"] = post["id"] in liked_post_ids
+
+            # Comments for only these posts, not the entire database.
+            cursor.execute(
+                f"""
+                SELECT
+                    comments.id,
+                    comments.post_id,
+                    comments.user_id,
+                    comments.comment_text,
+                    comments.created_at,
+                    users.full_name
+                FROM comments
+                INNER JOIN users ON comments.user_id = users.id
+                WHERE comments.post_id IN ({placeholders})
+                ORDER BY comments.created_at ASC, comments.id ASC
+                """,
+                params,
+            )
+            for comment in cursor.fetchall():
+                comments_by_post.setdefault(comment["post_id"], []).append(comment)
 
     except Error as error:
         flash(f"Database error: {error}")
@@ -1161,6 +1253,9 @@ def feed():
         "feed.html",
         posts=posts,
         comments_by_post=comments_by_post,
+        page=page,
+        has_next=has_next,
+        has_prev=page > 1,
         user=get_logged_in_user(),
     )
 

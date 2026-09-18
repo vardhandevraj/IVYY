@@ -627,6 +627,29 @@ code, pre {
     align-items: center;
 }
 
+/* ── Feed pagination ─────────────────────────────────────────────── */
+.pagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    padding: 24px 0 8px;
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+.pagination .disabled-link {
+    opacity: 0.45;
+    cursor: default;
+    background: transparent;
+}
+
+.pagination .disabled-link:hover {
+    color: var(--text-secondary);
+    background: transparent;
+    border-color: var(--border-glass);
+}
+
 .report-select {
     height: 34px;
     line-height: 1;
