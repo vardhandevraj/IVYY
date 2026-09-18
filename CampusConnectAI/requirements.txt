@@ -6,7 +6,7 @@ psycopg2-binary
 supabase
 python-dotenv
 werkzeug
-gevent>=24.11.1
+gevent==26.9.0
 gevent-websocket
 gunicorn==21.2.0
 Pillow

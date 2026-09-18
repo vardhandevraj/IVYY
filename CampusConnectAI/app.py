@@ -3,18 +3,9 @@ import re
 import io
 import json
 import smtplib
-import ssl
 import secrets
 import threading
-import ssl
-from urllib.request import Request, urlopen
-from urllib.error import HTTPError
-
-try:
-    import certifi
-    GOOGLE_SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
-except Exception:  # certifi not installed or unavailable
-    GOOGLE_SSL_CONTEXT = ssl.create_default_context()
+from gevent import subprocess as gsubprocess
 from datetime import datetime, timedelta
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -60,8 +51,7 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 # eventlet's monkey patching it does not break SSLContext.minimum_version.
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="gevent")
 
-# Google OAuth Sign-In. The client is only registered when the credentials are
-# Google OAuth is handled with plain urllib/Flask (no Authlib). Authlib's
+# Google OAuth is handled with plain Flask + curl (no Authlib). Authlib's
 # authorize_redirect/authorize_access_token caused "maximum recursion depth
 # exceeded" in this deployment, so the whole flow is done directly.
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
@@ -69,6 +59,33 @@ GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo"
+
+
+def _http_curl(url, method="GET", data=None, headers=None, timeout=20):
+    """Run a JSON HTTP request via curl in a subprocess so gevent's SSL
+    monkey-patching cannot break TLS (it caused SSLSocket class mismatch
+    errors in the worker). Returns (http_status, response_body)."""
+    cmd = [
+        "curl", "-sS", "-m", str(timeout),
+        "-w", "\n%{http_code}", "-X", method,
+    ]
+    if data is not None:
+        cmd += ["--data-binary", data]
+    for key, value in (headers or {}).items():
+        cmd += ["-H", f"{key}: {value}"]
+    cmd.append(url)
+    result = gsubprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 5)
+    stdout = result.stdout or ""
+    body, _, code_str = stdout.rpartition("\n")
+    try:
+        code = int(code_str.strip())
+    except ValueError:
+        if result.returncode != 0:
+            raise ValueError(
+                f"HTTP request failed: {(result.stderr or '').strip()[:200]}"
+            )
+        code = -1
+    return code, body
 
 # Uploaded files are saved inside static/uploads.
 app.config["UPLOAD_FOLDER"] = os.path.join(app.root_path, "static", "uploads")
@@ -358,30 +375,18 @@ def send_email(to_address, subject, html_body):
             "subject": subject,
             "htmlContent": html_body,
         }
-        request = Request(
-            "https://api.brevo.com/v3/smtp/email",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"api-key": api_key, "Content-Type": "application/json"},
-            method="POST",
-        )
         try:
-            try:
-                import certifi
-                context = ssl.create_default_context(cafile=certifi.where())
-            except (ImportError, AttributeError):
-                context = None
-            opener = urlopen(request, timeout=30, context=context) if context else urlopen(request, timeout=30)
-            with opener as response:
-                print(f"Brevo API send OK ({response.status}): {response.read().decode()[:120]}")
+            status, body = _http_curl(
+                "https://api.brevo.com/v3/smtp/email",
+                method="POST",
+                data=json.dumps(payload),
+                headers={"api-key": api_key, "Content-Type": "application/json"},
+                timeout=30,
+            )
+            print(f"Brevo API send OK ({status}): {body[:120]}")
             return True
         except Exception as error:
             print(f"Brevo API send failed: {error}")
-            read_error = getattr(error, "read", None)
-            if callable(read_error):
-                try:
-                    print(f"Brevo API error body: {read_error().decode()[:300]}")
-                except Exception:
-                    pass
             return False
 
     smtp_host = os.environ.get("SMTP_HOST")
@@ -1103,42 +1108,32 @@ def google_callback():
             "client_secret": GOOGLE_CLIENT_SECRET,
             "redirect_uri": state_data.get("redirect_uri"),
             "grant_type": "authorization_code",
-        }).encode("utf-8")
-        token_request = Request(
+        })
+        token_status, token_body = _http_curl(
             GOOGLE_TOKEN_URL,
+            method="POST",
             data=form,
             headers={"Content-Type": "application/x-www-form-urlencoded"},
-            method="POST",
         )
         try:
-            with urlopen(token_request, timeout=20, context=GOOGLE_SSL_CONTEXT) as token_response:
-                token = json.loads(token_response.read().decode("utf-8"))
-        except HTTPError as http_error:
-            body = http_error.read().decode("utf-8", "replace")
-            try:
-                detail = json.loads(body).get("error", "unknown error")
-            except Exception:
-                detail = (body or http_error.reason)[:200]
-            raise ValueError(f"Google token exchange failed: {detail}") from http_error
-        if "access_token" not in token:
+            token = json.loads(token_body) if token_body else {}
+        except Exception:
+            token = {}
+        if token_status != 200 or "access_token" not in token:
             raise ValueError(
-                f"Google token exchange failed: {token.get('error') or 'unknown error'}"
+                f"Google token exchange failed: {token.get('error') or token_status}"
             )
 
-        userinfo_request = Request(
+        userinfo_status, userinfo_body = _http_curl(
             GOOGLE_USERINFO_URL,
             headers={"Authorization": f"Bearer {token['access_token']}"},
         )
+        if userinfo_status != 200:
+            raise ValueError(f"Google userinfo failed (HTTP {userinfo_status})")
         try:
-            with urlopen(userinfo_request, timeout=20, context=GOOGLE_SSL_CONTEXT) as userinfo_response:
-                userinfo = json.loads(userinfo_response.read().decode("utf-8"))
-        except HTTPError as http_error:
-            body = http_error.read().decode("utf-8", "replace")
-            try:
-                detail = json.loads(body).get("error", "unknown error")
-            except Exception:
-                detail = (body or http_error.reason)[:200]
-            raise ValueError(f"Google userinfo failed: {detail}") from http_error
+            userinfo = json.loads(userinfo_body) if userinfo_body else {}
+        except Exception:
+            userinfo = {}
     except Exception as error:
         import traceback
         traceback.print_exc()
