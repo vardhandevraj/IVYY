@@ -1062,7 +1062,12 @@ def login_google():
         return redirect(url_for("login"))
 
     redirect_uri = url_for("google_callback", _external=True)
-    return oauth.google.authorize_redirect(redirect_uri)
+    try:
+        return oauth.google.authorize_redirect(redirect_uri)
+    except Exception as error:
+        print(f"Google OAuth error: {error}")
+        flash(f"Google Sign-In could not be started ({error}). Please try again.")
+        return redirect(url_for("login"))
 
 
 @app.route("/login/google/callback")
