@@ -6,8 +6,15 @@ import smtplib
 import ssl
 import secrets
 import threading
-import requests
+import ssl
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError
+
+try:
+    import certifi
+    GOOGLE_SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
+except Exception:  # certifi not installed or unavailable
+    GOOGLE_SSL_CONTEXT = ssl.create_default_context()
 from datetime import datetime, timedelta
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -22,7 +29,6 @@ from PIL import Image
 import urllib.parse
 from flask import Flask, flash, redirect, render_template, request, session, url_for, g
 from flask_socketio import SocketIO, emit, join_room, leave_room
-from authlib.integrations.flask_client import OAuth
 from psycopg2 import Error
 from dotenv import load_dotenv
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -55,26 +61,14 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="gevent")
 
 # Google OAuth Sign-In. The client is only registered when the credentials are
-# present in the environment, so the app keeps working without Google set up.
+# Google OAuth is handled with plain urllib/Flask (no Authlib). Authlib's
+# authorize_redirect/authorize_access_token caused "maximum recursion depth
+# exceeded" in this deployment, so the whole flow is done directly.
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
-
-oauth = OAuth(app)
-if GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET:
-    # Google's endpoints are hardcoded instead of fetched via
-    # server_metadata_url (OpenID discovery). Discovery adds a network round
-    # trip on every login and is the usual cause of "maximum recursion depth
-    # exceeded" in authorize_redirect on some runtimes.
-    oauth.register(
-        name="google",
-        client_id=GOOGLE_CLIENT_ID,
-        client_secret=GOOGLE_CLIENT_SECRET,
-        authorize_url="https://accounts.google.com/o/oauth2/v2/auth",
-        access_token_url="https://oauth2.googleapis.com/token",
-        userinfo_endpoint="https://openidconnect.googleapis.com/v1/userinfo",
-        jwks_uri="https://www.googleapis.com/oauth2/v3/certs",
-        client_kwargs={"scope": "openid email profile"},
-    )
+GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GOOGLE_USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo"
 
 # Uploaded files are saved inside static/uploads.
 app.config["UPLOAD_FOLDER"] = os.path.join(app.root_path, "static", "uploads")
@@ -1070,14 +1064,25 @@ def login_google():
         return redirect(url_for("login"))
 
     redirect_uri = url_for("google_callback", _external=True)
-    try:
-        return oauth.google.authorize_redirect(redirect_uri)
-    except Exception as error:
-        import traceback
-        traceback.print_exc()
-        print(f"Google OAuth error: {error}")
-        flash(f"Google Sign-In could not be started ({error}). Please try again.")
-        return redirect(url_for("login"))
+    state = secrets.token_urlsafe(24)
+    nonce = secrets.token_urlsafe(16)
+    session["google_oauth_state"] = {
+        "state": state,
+        "nonce": nonce,
+        "redirect_uri": redirect_uri,
+    }
+
+    auth_url = GOOGLE_AUTH_URL + "?" + urllib.parse.urlencode({
+        "client_id": GOOGLE_CLIENT_ID,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": "openid email profile",
+        "state": state,
+        "nonce": nonce,
+        "prompt": "select_account",
+        "access_type": "online",
+    })
+    return redirect(auth_url)
 
 
 @app.route("/login/google/callback")
@@ -1085,41 +1090,55 @@ def google_callback():
     """Handle Google's response and log the student in."""
     userinfo = None
     try:
+        state_param = request.args.get("state")
         code = request.args.get("code")
-        state = request.args.get("state")
-        if not code or not state:
-            raise ValueError("Missing code or state from Google")
-
-        # Validate the CSRF state that authorize_redirect stored in the session
-        # (same check authlib does in authorize_access_token).
-        state_data = oauth.google.framework.get_state_data(session, state)
-        if not state_data:
+        # Validate the CSRF state we stored in the session at /login/google.
+        state_data = session.pop("google_oauth_state", None)
+        if not state_param or not code or not state_data or state_data.get("state") != state_param:
             raise ValueError("State mismatch with Google. Please restart sign-in.")
 
-        token_response = requests.post(
-            "https://oauth2.googleapis.com/token",
-            data={
-                "code": code,
-                "client_id": GOOGLE_CLIENT_ID,
-                "client_secret": GOOGLE_CLIENT_SECRET,
-                "redirect_uri": state_data.get("redirect_uri"),
-                "grant_type": "authorization_code",
-            },
-            timeout=20,
+        form = urllib.parse.urlencode({
+            "code": code,
+            "client_id": GOOGLE_CLIENT_ID,
+            "client_secret": GOOGLE_CLIENT_SECRET,
+            "redirect_uri": state_data.get("redirect_uri"),
+            "grant_type": "authorization_code",
+        }).encode("utf-8")
+        token_request = Request(
+            GOOGLE_TOKEN_URL,
+            data=form,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            method="POST",
         )
-        token = token_response.json()
-        if token_response.status_code != 200 or "access_token" not in token:
+        try:
+            with urlopen(token_request, timeout=20, context=GOOGLE_SSL_CONTEXT) as token_response:
+                token = json.loads(token_response.read().decode("utf-8"))
+        except HTTPError as http_error:
+            body = http_error.read().decode("utf-8", "replace")
+            try:
+                detail = json.loads(body).get("error", "unknown error")
+            except Exception:
+                detail = (body or http_error.reason)[:200]
+            raise ValueError(f"Google token exchange failed: {detail}") from http_error
+        if "access_token" not in token:
             raise ValueError(
-                f"Google token exchange failed: {token.get('error', token_response.status_code)}"
+                f"Google token exchange failed: {token.get('error') or 'unknown error'}"
             )
 
-        userinfo_response = requests.get(
-            "https://openidconnect.googleapis.com/v1/userinfo",
+        userinfo_request = Request(
+            GOOGLE_USERINFO_URL,
             headers={"Authorization": f"Bearer {token['access_token']}"},
-            timeout=20,
         )
-        userinfo_response.raise_for_status()
-        userinfo = userinfo_response.json()
+        try:
+            with urlopen(userinfo_request, timeout=20, context=GOOGLE_SSL_CONTEXT) as userinfo_response:
+                userinfo = json.loads(userinfo_response.read().decode("utf-8"))
+        except HTTPError as http_error:
+            body = http_error.read().decode("utf-8", "replace")
+            try:
+                detail = json.loads(body).get("error", "unknown error")
+            except Exception:
+                detail = (body or http_error.reason)[:200]
+            raise ValueError(f"Google userinfo failed: {detail}") from http_error
     except Exception as error:
         import traceback
         traceback.print_exc()
