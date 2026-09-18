@@ -1167,6 +1167,8 @@ def feed():
         cursor = db_cursor(connection, dictionary=True)
 
         # Fetch one extra post to know whether a second page exists.
+        # Counts are correlated subqueries that run against only these 20 rows
+        # (backed by the likes/comments indexes), so it stays one round trip.
         cursor.execute(
             """
             SELECT
@@ -1179,13 +1181,20 @@ def feed():
                 posts.created_at,
                 users.full_name,
                 users.department,
-                users.study_year
+                users.study_year,
+                (SELECT COUNT(*) FROM likes WHERE likes.post_id = posts.id) AS like_count,
+                (SELECT COUNT(*) FROM comments WHERE comments.post_id = posts.id) AS comment_count,
+                (
+                    SELECT COUNT(*)
+                    FROM likes
+                    WHERE likes.post_id = posts.id AND likes.user_id = %s
+                ) AS liked_by_user
             FROM posts
             INNER JOIN users ON posts.user_id = users.id
             ORDER BY posts.created_at DESC, posts.id DESC
             LIMIT %s OFFSET %s
             """,
-            (per_page + 1, offset),
+            (session["user_id"], per_page + 1, offset),
         )
         page_rows = cursor.fetchall()
         has_next = len(page_rows) > per_page
@@ -1194,35 +1203,6 @@ def feed():
         post_ids = [post["id"] for post in posts]
         if post_ids:
             placeholders = ", ".join(["%s"] * len(post_ids))
-            params = tuple(post_ids)
-
-            # Like and comment totals for every post on this page, grouped once
-            # instead of a correlated COUNT subquery per post.
-            cursor.execute(
-                f"SELECT post_id, COUNT(*) AS like_count FROM likes "
-                f"WHERE post_id IN ({placeholders}) GROUP BY post_id",
-                params,
-            )
-            like_counts = {row["post_id"]: row["like_count"] for row in cursor.fetchall()}
-
-            cursor.execute(
-                f"SELECT post_id, COUNT(*) AS comment_count FROM comments "
-                f"WHERE post_id IN ({placeholders}) GROUP BY post_id",
-                params,
-            )
-            comment_counts = {row["post_id"]: row["comment_count"] for row in cursor.fetchall()}
-
-            # Whether the logged-in student already liked each post.
-            cursor.execute(
-                f"SELECT post_id FROM likes WHERE post_id IN ({placeholders}) AND user_id = %s",
-                tuple(list(post_ids) + [session["user_id"]]),
-            )
-            liked_post_ids = {row["post_id"] for row in cursor.fetchall()}
-
-            for post in posts:
-                post["like_count"] = like_counts.get(post["id"], 0)
-                post["comment_count"] = comment_counts.get(post["id"], 0)
-                post["liked_by_user"] = post["id"] in liked_post_ids
 
             # Comments for only these posts, not the entire database.
             cursor.execute(
@@ -1239,7 +1219,7 @@ def feed():
                 WHERE comments.post_id IN ({placeholders})
                 ORDER BY comments.created_at ASC, comments.id ASC
                 """,
-                params,
+                tuple(post_ids),
             )
             for comment in cursor.fetchall():
                 comments_by_post.setdefault(comment["post_id"], []).append(comment)
