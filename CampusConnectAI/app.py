@@ -6,6 +6,7 @@ import smtplib
 import ssl
 import secrets
 import threading
+import requests
 from urllib.request import Request, urlopen
 from datetime import datetime, timedelta
 from email.mime.text import MIMEText
@@ -1082,9 +1083,43 @@ def login_google():
 @app.route("/login/google/callback")
 def google_callback():
     """Handle Google's response and log the student in."""
+    userinfo = None
     try:
-        token = oauth.google.authorize_access_token()
-        userinfo = oauth.google.userinfo(token=token)
+        code = request.args.get("code")
+        state = request.args.get("state")
+        if not code or not state:
+            raise ValueError("Missing code or state from Google")
+
+        # Validate the CSRF state that authorize_redirect stored in the session
+        # (same check authlib does in authorize_access_token).
+        state_data = oauth.google.framework.get_state_data(session, state)
+        if not state_data:
+            raise ValueError("State mismatch with Google. Please restart sign-in.")
+
+        token_response = requests.post(
+            "https://oauth2.googleapis.com/token",
+            data={
+                "code": code,
+                "client_id": GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
+                "redirect_uri": state_data.get("redirect_uri"),
+                "grant_type": "authorization_code",
+            },
+            timeout=20,
+        )
+        token = token_response.json()
+        if token_response.status_code != 200 or "access_token" not in token:
+            raise ValueError(
+                f"Google token exchange failed: {token.get('error', token_response.status_code)}"
+            )
+
+        userinfo_response = requests.get(
+            "https://openidconnect.googleapis.com/v1/userinfo",
+            headers={"Authorization": f"Bearer {token['access_token']}"},
+            timeout=20,
+        )
+        userinfo_response.raise_for_status()
+        userinfo = userinfo_response.json()
     except Exception as error:
         import traceback
         traceback.print_exc()
