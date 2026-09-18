@@ -72,6 +72,10 @@ if GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET:
 app.config["UPLOAD_FOLDER"] = os.path.join(app.root_path, "static", "uploads")
 app.config["ALLOWED_EXTENSIONS"] = {"png", "jpg", "jpeg", "gif", "pdf", "ppt", "pptx"}
 app.config["IMAGE_EXTENSIONS"] = {"png", "jpg", "jpeg", "gif"}
+# Long cache headers for static assets (CSS, JS, images) so browsers and the
+# CDN stop re-downloading them on every page load. Files are rarely changed;
+# edit one and force-refresh or add ?v= to bust the cache.
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 2592000
 
 # MySQL connection settings.
 # You can change these values or set environment variables before running the app.
