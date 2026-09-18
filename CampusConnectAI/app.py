@@ -1085,8 +1085,11 @@ def google_callback():
     try:
         token = oauth.google.authorize_access_token()
         userinfo = oauth.google.userinfo(token=token)
-    except Exception:
-        flash("Google Sign-In could not be completed. Please try again.")
+    except Exception as error:
+        import traceback
+        traceback.print_exc()
+        print(f"Google OAuth callback error: {error}")
+        flash(f"Google Sign-In could not be completed ({error}). Please try again.")
         return redirect(url_for("login"))
 
     if not userinfo or not userinfo.get("email"):
