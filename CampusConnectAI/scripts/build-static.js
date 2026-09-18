@@ -45,7 +45,7 @@ const indexHtml = `<!DOCTYPE html>
 <body>
   <header class="topbar">
     <a class="brand" href="/">
-      <img class="brand-logo" src="/images/logo.png" alt="IVY">
+      <img class="brand-logo" src="/images/logo.webp" alt="IVY">
     </a>
     <nav class="nav-links" id="navLinks">
       <a href="#features">Features</a>
