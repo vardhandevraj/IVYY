@@ -105,6 +105,11 @@
                 </div>
 
                 <div class="form-row">
+                    <label for="confirm_password">Confirm Password</label>
+                    <input type="password" id="confirm_password" name="confirm_password" placeholder="••••••••" required>
+                </div>
+
+                <div class="form-row">
                     <label for="bio">Short Academic Bio</label>
                     <textarea id="bio" name="bio" rows="3" placeholder="Brief summary of your academic interests and projects..."></textarea>
                 </div>
@@ -121,5 +126,23 @@
     </main>
 
     <script src="{{ url_for('static', filename='script.js') }}"></script>
+    <script>
+        (function () {
+            const form = document.querySelector(".auth-form");
+            const password = document.getElementById("password");
+            const confirmEl = document.getElementById("confirm_password");
+            if (!form || !password || !confirmEl) return;
+            form.addEventListener("submit", function () {
+                if (password.value !== confirmEl.value) {
+                    confirmEl.setCustomValidity("Passwords do not match.");
+                } else {
+                    confirmEl.setCustomValidity("");
+                }
+            });
+            confirmEl.addEventListener("input", function () {
+                confirmEl.setCustomValidity("");
+            });
+        })();
+    </script>
 </body>
 </html>

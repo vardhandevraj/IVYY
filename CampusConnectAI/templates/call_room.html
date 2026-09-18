@@ -61,7 +61,7 @@
                     {% set is_ivy = message.message_type == 'ai' or message.sender_id == None %}
                     <article class="message-row {% if message.sender_id == user.id %}is-own{% endif %} {% if is_ivy %}is-ivy{% endif %}">
                         {% if message.sender_id != user.id %}<div class="message-avatar {% if is_ivy %}ivy-avatar{% endif %}">{{ '✦' if is_ivy else message.sender_name[:1]|upper }}</div>{% endif %}
-                        <div class="message-stack"><div class="message-sender-line"><strong>{{ 'IVY' if is_ivy else message.sender_name }}</strong>{% if is_ivy %}<span class="ivy-badge">AI learning assistant</span>{% endif %}<time datetime="{{ message.created_at.isoformat() if message.created_at else '' }}">{{ message.created_at.strftime('%H:%M') if message.created_at else '' }}</time></div><div class="message-bubble {% if is_ivy %}ivy-message{% endif %}"><div class="message-content" {% if is_ivy %}data-markdown="true"{% endif %}>{{ message.message_text }}</div></div></div>
+                        <div class="message-stack"><div class="message-sender-line"><strong>{{ 'IVY' if is_ivy else message.sender_name }}</strong>{% if is_ivy %}<span class="ivy-badge">AI learning assistant</span>{% endif %}<time datetime="{{ campus_time(message.created_at).isoformat() if message.created_at else '' }}">{{ campus_time(message.created_at).strftime('%H:%M') if message.created_at else '' }}</time></div><div class="message-bubble {% if is_ivy %}ivy-message{% endif %}"><div class="message-content" {% if is_ivy %}data-markdown="true"{% endif %}>{{ message.message_text }}</div></div></div>
                     </article>
                 {% endfor %}
             </div>

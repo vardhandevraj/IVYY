@@ -6,7 +6,8 @@ import smtplib
 import secrets
 import threading
 from gevent import subprocess as gsubprocess
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
@@ -50,6 +51,24 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 # gevent backend (with gunicorn's gevent worker) so websockets work; unlike
 # eventlet's monkey patching it does not break SSLContext.minimum_version.
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="gevent")
+
+# ── Localised timestamps ──────────────────────────────────────────────────
+# The database stores created_at as UTC (Postgres CURRENT_TIMESTAMP), so a
+# bare strftime() renders UTC hours. Convert to the campus timezone up front
+# for every display so timestamps match the messages' real local time.
+CAMPUS_TIMEZONE = ZoneInfo("Asia/Kolkata")
+
+
+def campus_time(dt):
+    """Return a DB timestamp (stored UTC, naive) converted to the campus timezone."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(CAMPUS_TIMEZONE)
+
+
+app.jinja_env.globals["campus_time"] = campus_time
 
 # Google OAuth is handled with plain Flask + curl (no Authlib). Authlib's
 # authorize_redirect/authorize_access_token caused "maximum recursion depth
@@ -612,7 +631,11 @@ def register():
         department = request.form.get("department")
         year = request.form.get("year")
         password = request.form.get("password")
+        confirm_password = request.form.get("confirm_password")
         bio = request.form.get("bio")
+        if not password or password != confirm_password:
+            flash("Passwords do not match. Please try again.")
+            return redirect(url_for("register"))
         hashed_password = generate_password_hash(password)
 
         try:
@@ -2463,7 +2486,7 @@ def emit_conversation_update(conversation_id, message_text, message_type, sender
                 "message_type": message_type,
                 "sender_id": sender_id,
                 "is_unread": sender_id is None or sender_id != participant_id,
-                "updated_at": datetime.now().isoformat(),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
             },
             room=f"user_{participant_id}",
         )
@@ -2504,7 +2527,7 @@ def save_and_emit_ivy_message(conversation_id, message_text):
         "message_text": message_text,
         "message_type": "ai",
         "conversation_id": conversation_id,
-        "created_at": datetime.now().isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
     }
     socketio.emit("receive_chat_message", payload, room=f"conversation_{conversation_id}")
     emit_conversation_update(conversation_id, message_text, "ai", None, participant_ids)
@@ -2695,7 +2718,7 @@ def send_chat_message(data):
         "message_text": message_text,
         "message_type": "text",
         "conversation_id": conversation_id,
-        "created_at": datetime.now().isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
     }
     socketio.emit("receive_chat_message", payload, room=f"conversation_{conversation_id}")
     emit_conversation_update(conversation_id, message_text, "text", sender_id, participant_ids)
@@ -3282,7 +3305,7 @@ def save_and_emit_call_ivy_message(room_id, conversation_id, message_text):
         "sender_name": "IVY",
         "message_text": message_text,
         "message_type": "ai",
-        "created_at": datetime.now().isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
     }
     # One insert + one fan-out per surface: everyone sees exactly the same response.
     # The room broadcast happens even if persistence failed so no client is left
@@ -3373,7 +3396,7 @@ def send_call_message(data):
         "sender_name": sender_name,
         "message_text": message_text,
         "message_type": "text",
-        "created_at": datetime.now().isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
     }
     socketio.emit("receive_call_message", payload, room=f"call_{room_id}")
     emit_conversation_update(conversation_id, message_text, "text", sender_id, participant_ids)

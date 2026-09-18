@@ -106,8 +106,8 @@
                     </div>
                     <div class="conversation-copy">
                         <div class="conversation-name-row"><strong>{{ conversation.display_name }}</strong><time
-                                datetime="{{ conversation.updated_at.isoformat() if conversation.updated_at else '' }}">{{
-                                conversation.updated_at.strftime('%H:%M') if conversation.updated_at else '' }}</time>
+                                datetime="{{ campus_time(conversation.updated_at).isoformat() if conversation.updated_at else '' }}">{{
+                                campus_time(conversation.updated_at).strftime('%H:%M') if conversation.updated_at else '' }}</time>
                         </div>
                         <div class="conversation-preview-row"><span
                                 class="conversation-preview {% if conversation.unread_count %}has-unread{% endif %}">{%
@@ -146,7 +146,7 @@
                             href="{{ url_for('public_profile', user_id=selected_conversation.other_user_id) }}">{{
                             selected_conversation.display_name }}</a>{% else %}{{ selected_conversation.display_name }}{%
                         endif %}</h2>{% if selected_conversation.is_group %}<p>{{
-                        selected_members|length }} members · Created {{ selected_conversation.created_at.strftime('%d %b
+                        selected_members|length }} members · Created {{ campus_time(selected_conversation.created_at).strftime('%d %b
                         %Y') }}</p>{% else %}<p>Peer learning chat{% if selected_conversation.other_user_department %} ·
                         {{ selected_conversation.other_user_department }}{% endif %}</p>{% endif %}
                 </div>
@@ -174,7 +174,7 @@
                         <div class="conversation-popover">{% if selected_conversation.is_group %}<strong>{{
                                 selected_conversation.display_name }}</strong>
                             <p>Created by {{ selected_conversation.creator_name or 'a PeerVerse student' }}</p>
-                            <p>Last activity {{ selected_conversation.updated_at.strftime('%d %b, %H:%M') }}</p>
+                            <p>Last activity {{ campus_time(selected_conversation.updated_at).strftime('%d %b, %H:%M') }}</p>
                             <div class="member-stack">{% for member in selected_members[:6] %}<span
                                     title="{{ member.full_name }}">{{ member.full_name[:1]|upper }}</span>{% endfor %}{%
                                 if selected_members|length > 6 %}<span>+{{ selected_members|length - 6 }}</span>{% endif
@@ -203,8 +203,8 @@
                                 user_id=message.sender_id) }}">{{ message.sender_name }}</a></strong>{% else
                             %}<strong>{{ message.sender_name }}</strong>{% endif %}{% if is_ivy %}<span
                                 class="ivy-badge">AI learning assistant</span>{% endif %}<time
-                                datetime="{{ message.created_at.isoformat() if message.created_at else '' }}">{{
-                                message.created_at.strftime('%H:%M') if message.created_at else '' }}</time></div>
+                                datetime="{{ campus_time(message.created_at).isoformat() if message.created_at else '' }}">{{
+                                campus_time(message.created_at).strftime('%H:%M') if message.created_at else '' }}</time></div>
                         <div class="message-bubble {% if is_ivy %}ivy-message{% endif %}">
                             <div class="message-content" {% if is_ivy %}data-markdown="true" {% endif %}>{{
                                 message.message_text }}</div>

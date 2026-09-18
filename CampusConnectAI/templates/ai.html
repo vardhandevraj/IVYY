@@ -91,7 +91,7 @@
                             <div class="conversation-copy">
                                 <div class="conversation-name-row">
                                     <strong>{{ conversation.title }}</strong>
-                                    <time datetime="{{ conversation.updated_at.isoformat() if conversation.updated_at else '' }}">{{ conversation.updated_at.strftime('%H:%M') if conversation.updated_at else '' }}</time>
+                                    <time datetime="{{ campus_time(conversation.updated_at).isoformat() if conversation.updated_at else '' }}">{{ campus_time(conversation.updated_at).strftime('%H:%M') if conversation.updated_at else '' }}</time>
                                 </div>
                                 <div class="conversation-preview-row">
                                     <span class="conversation-preview">{% if conversation.last_role == 'assistant' %}IVY: {% elif conversation.last_role == 'user' %}You: {% endif %}{{ conversation.last_message or 'No messages yet' }}</span>
@@ -148,7 +148,7 @@
                             <div class="message-sender-line">
                                 <strong>{{ 'You' if is_user else 'IVY' }}</strong>
                                 {% if not is_user %}<span class="ivy-badge">AI learning assistant</span>{% endif %}
-                                <time datetime="{{ message.created_at.isoformat() if message.created_at else '' }}">{{ message.created_at.strftime('%H:%M') if message.created_at else '' }}</time>
+                                <time datetime="{{ campus_time(message.created_at).isoformat() if message.created_at else '' }}">{{ campus_time(message.created_at).strftime('%H:%M') if message.created_at else '' }}</time>
                             </div>
                             <div class="message-bubble {% if not is_user %}ivy-message{% endif %}">
                                 <div class="message-content" {% if not is_user %}data-markdown="true"{% endif %}>{{ message.content }}</div>

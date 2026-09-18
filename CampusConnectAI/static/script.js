@@ -7,8 +7,14 @@
 
 function formatChatTime(value) {
     if (!value) return "";
-    const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? "" : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    let text = String(value);
+    if (/Z$|[+-]\d{2}:\d{2}$/.test(text) === false && /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(text)) {
+        text += "Z";
+    }
+    const date = new Date(text);
+    return Number.isNaN(date.getTime()) ? "" : date.toLocaleTimeString([], {
+        timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit"
+    });
 }
 
 function renderIvyMarkdown(element, text) {
